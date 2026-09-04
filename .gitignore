@@ -1,0 +1,14 @@
+# ── 隐私红线：任何个人日程数据都不得进入公开仓库 ─────────────────────────
+my-schedule-*.json
+schedule-backup-*.json
+*.local.json
+
+# 课程大纲原件（含个人选课信息）
+class description/
+*.pdf
+
+# 系统与编辑器
+.DS_Store
+.claude/
+.vscode/
+.idea/

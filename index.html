@@ -1,0 +1,1570 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>课程与作业日历</title>
+<meta name="description" content="完全离线、本地端到端加密的个人课程与作业 DDL 看板。">
+<!-- 隐私：本应用没有后端、没有埋点、没有任何跨域请求；同时拒绝被搜索引擎索引 -->
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f5f7">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="课程日历">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<link rel="icon" type="image/png" href="./icon-192.png">
+<style>
+/* ===========================================================================
+ * 设计令牌（Design Tokens）—— Apple / Notion 极简语汇
+ * 说明：此处以手写的 Tailwind 风格「令牌 + 原子类」替代 Tailwind CDN。
+ *      原因：CDN 版 Tailwind 是运行时 JIT 编译器（~100KB+ 且必须联网首载），
+ *      与「完全离线、秒开、零外部请求」的硬需求冲突。命名与分层保持一致。
+ * ======================================================================== */
+:root{
+  --bg:#f2f2f7; --bg-elev:#ffffff; --surface:rgba(255,255,255,.72);
+  --text:#1d1d1f; --text-2:#6e6e73; --text-3:#a1a1a6;
+  --line:rgba(60,60,67,.12); --line-2:rgba(60,60,67,.06);
+  --accent:#0a84ff; --accent-soft:rgba(10,132,255,.12);
+  --warn:#ff9500; --warn-soft:rgba(255,149,0,.14);
+  --danger:#ff3b30; --danger-soft:rgba(255,59,48,.13);
+  --ok:#34c759; --violet:#5e5ce6; --teal:#30b0c7; --pink:#ff2d92;
+  --r-lg:20px; --r-md:14px; --r-sm:10px;
+  --shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.06);
+  --shadow-lg:0 -1px 0 var(--line-2), 0 -12px 40px rgba(0,0,0,.10);
+  --nav-h:58px;
+  --ease:cubic-bezier(.32,.72,0,1);
+  --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#000000; --bg-elev:#1c1c1e; --surface:rgba(28,28,30,.72);
+    --text:#f5f5f7; --text-2:#98989d; --text-3:#636366;
+    --line:rgba(84,84,88,.36); --line-2:rgba(84,84,88,.18);
+    --accent:#0a84ff; --accent-soft:rgba(10,132,255,.20);
+    --warn:#ff9f0a; --warn-soft:rgba(255,159,10,.18);
+    --danger:#ff453a; --danger-soft:rgba(255,69,58,.18);
+    --ok:#30d158; --violet:#7d7aff; --teal:#40c8e0; --pink:#ff375f;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 8px 24px rgba(0,0,0,.4);
+    --shadow-lg:0 -1px 0 var(--line-2), 0 -12px 40px rgba(0,0,0,.6);
+  }
+}
+*,*::before,*::after{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%}
+body{
+  background:var(--bg); color:var(--text);
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue","Segoe UI",Roboto,"Noto Sans SC",sans-serif;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  overscroll-behavior-y:none;
+}
+button,input,textarea,select{font:inherit;color:inherit}
+button{background:none;border:0;padding:0;cursor:pointer}
+[hidden]{display:none !important}
+::selection{background:var(--accent-soft)}
+.tnum{font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1}
+.muted{color:var(--text-2)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ------------------------------ 布局骨架 ------------------------------ */
+.app{
+  max-width:560px; margin:0 auto; min-height:100%;
+  padding:calc(var(--sat) + 8px) 16px calc(var(--nav-h) + var(--sab) + 24px);
+  opacity:0; transition:opacity .5s var(--ease), transform .5s var(--ease);
+  transform:scale(.985);
+}
+.app.ready{opacity:1;transform:none}
+
+/* -------------------------------- 顶栏 -------------------------------- */
+.topbar{display:flex;align-items:center;gap:10px;padding:6px 2px 14px}
+.month{font-size:22px;font-weight:700;letter-spacing:-.02em;flex:1;min-width:0;display:flex;
+  align-items:baseline;gap:8px;white-space:nowrap}
+.month .ym{flex:0 0 auto}
+.month small{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  font-size:13px;font-weight:500;color:var(--text-3);letter-spacing:0}
+.icon-btn{
+  width:34px;height:34px;border-radius:50%;display:grid;place-items:center;color:var(--text-2);
+  transition:background .18s var(--ease), color .18s var(--ease), transform .12s var(--ease);
+}
+.icon-btn:hover{background:var(--line-2);color:var(--text)}
+.icon-btn:active{transform:scale(.9)}
+.today-btn{
+  height:30px;padding:0 12px;border-radius:15px;background:var(--accent-soft);color:var(--accent);
+  font-size:13px;font-weight:600;transition:transform .12s var(--ease),opacity .2s
+}
+.today-btn:active{transform:scale(.94)}
+
+/* ------------------------------- 日历 -------------------------------- */
+.cal{
+  background:var(--bg-elev); border-radius:var(--r-lg); padding:12px 10px 8px;
+  box-shadow:var(--shadow); border:1px solid var(--line-2);
+}
+.dow{display:grid;grid-template-columns:repeat(7,1fr);margin-bottom:4px}
+.dow span{text-align:center;font-size:11px;font-weight:600;color:var(--text-3);letter-spacing:.04em}
+.dow span.we{color:var(--text-2)}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px 0}
+.cell{
+  position:relative;aspect-ratio:1/1.06;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:3px;border-radius:12px;transition:background .16s var(--ease);
+}
+.cell:active{background:var(--line-2)}
+.cell .n{
+  width:32px;height:32px;border-radius:50%;display:grid;place-items:center;
+  font-size:15px;font-weight:500;letter-spacing:-.01em;
+  transition:background .2s var(--ease), color .2s var(--ease), transform .2s var(--ease);
+}
+.cell.out .n{color:var(--text-3);opacity:.55}
+.cell.today .n{color:var(--accent);font-weight:700}
+.cell.sel .n{background:var(--text);color:var(--bg-elev);font-weight:600;transform:scale(1.02)}
+.cell.sel.today .n{background:var(--accent);color:#fff}
+.dots{display:flex;gap:3px;height:5px;align-items:center}
+.dot{width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.dot.c{background:var(--accent)} .dot.c2{background:var(--violet)} .dot.c3{background:var(--teal)}
+.dot.d{background:var(--warn)} .dot.overdue{background:var(--danger)} .dot.done{background:var(--text-3);opacity:.5}
+.cell.sel .dot{box-shadow:0 0 0 1.5px var(--bg-elev)}
+
+/* ------------------------------ 当日看板 ------------------------------ */
+.day-head{display:flex;align-items:baseline;gap:8px;padding:22px 4px 10px}
+.day-head h2{margin:0;font-size:17px;font-weight:700;letter-spacing:-.01em}
+.day-head .rel{font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-soft);padding:2px 8px;border-radius:8px}
+.day-head .cnt{margin-left:auto;font-size:12px;color:var(--text-3)}
+.sec-title{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--text-3);
+  letter-spacing:.06em;padding:14px 4px 8px}
+.sec-title .line{flex:1;height:1px;background:var(--line-2)}
+.list{display:flex;flex-direction:column;gap:8px}
+.card{
+  position:relative;background:var(--bg-elev);border:1px solid var(--line-2);border-radius:var(--r-md);
+  padding:12px 14px 12px 16px;box-shadow:var(--shadow);overflow:hidden;
+  animation:rise .34s var(--ease) both;
+}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent)}
+.card.c2::before{background:var(--violet)} .card.c3::before{background:var(--teal)}
+.card.c4::before{background:var(--pink)} .card.c5::before{background:var(--ok)}
+.card.due::before{background:var(--warn)} .card.overdue::before{background:var(--danger)}
+.card.done{opacity:.55}
+.card-row{display:flex;align-items:flex-start;gap:12px}
+.time{min-width:52px;font-size:13px;font-weight:700;letter-spacing:-.01em;line-height:1.35}
+.time small{display:block;font-size:11px;font-weight:500;color:var(--text-3)}
+.body{flex:1;min-width:0}
+.title{font-size:15px;font-weight:600;letter-spacing:-.01em;word-break:break-word}
+.card.done .title{text-decoration:line-through;text-decoration-color:var(--text-3)}
+.sub{margin-top:3px;font-size:12.5px;color:var(--text-2);display:flex;flex-wrap:wrap;gap:4px 10px}
+.note{margin-top:6px;font-size:12px;color:var(--text-3);line-height:1.45;word-break:break-word}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:1.5px 7px;
+  border-radius:6px;background:var(--line-2);color:var(--text-2)}
+.tag.blue{background:var(--accent-soft);color:var(--accent)}
+.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.tag.danger{background:var(--danger-soft);color:var(--danger)}
+.check{
+  flex:0 0 auto;width:24px;height:24px;border-radius:50%;border:1.8px solid var(--line);
+  display:grid;place-items:center;margin-top:1px;
+  transition:background .2s var(--ease),border-color .2s var(--ease),transform .12s var(--ease);
+}
+.check:active{transform:scale(.86)}
+.check svg{opacity:0;transform:scale(.5);transition:opacity .2s var(--ease),transform .25s var(--ease);color:#fff}
+.check.on{background:var(--ok);border-color:var(--ok)}
+.check.on svg{opacity:1;transform:none}
+.empty{
+  text-align:center;padding:34px 20px;color:var(--text-3);background:var(--bg-elev);
+  border:1px dashed var(--line);border-radius:var(--r-md);animation:rise .34s var(--ease) both;
+}
+.empty .em{font-size:26px;display:block;margin-bottom:8px;opacity:.85}
+.empty p{margin:0;font-size:13.5px}
+.empty p+p{margin-top:4px;font-size:12px;opacity:.8}
+
+/* ------------------------------ 底部导航 ------------------------------ */
+.nav{
+  position:fixed;left:0;right:0;bottom:0;z-index:40;
+  padding-bottom:var(--sab);
+  background:var(--surface);
+  -webkit-backdrop-filter:saturate(180%) blur(22px); backdrop-filter:saturate(180%) blur(22px);
+  border-top:1px solid var(--line-2);
+}
+.nav-inner{max-width:560px;margin:0 auto;height:var(--nav-h);display:grid;grid-template-columns:repeat(3,1fr)}
+.nav-btn{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+  color:var(--text-3);font-size:10.5px;font-weight:600;letter-spacing:.02em;
+  transition:color .22s var(--ease);
+}
+.nav-btn svg{transition:transform .32s var(--ease)}
+.nav-btn.on{color:var(--accent)}
+.nav-btn.on svg{transform:translateY(-1px) scale(1.06)}
+.nav-btn:active svg{transform:scale(.88)}
+.nav-btn.mode-due.on{color:var(--warn)}
+
+/* -------------------------- 锁屏（磨砂玻璃） -------------------------- */
+.lock{
+  position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;padding:24px;
+  background:
+    radial-gradient(120% 80% at 15% 0%, rgba(10,132,255,.30), transparent 60%),
+    radial-gradient(100% 70% at 90% 100%, rgba(94,92,230,.28), transparent 60%),
+    var(--bg);
+  -webkit-backdrop-filter:blur(40px) saturate(180%); backdrop-filter:blur(40px) saturate(180%);
+  transition:opacity .45s var(--ease), transform .45s var(--ease);
+}
+.lock.hide{opacity:0;transform:scale(1.06);pointer-events:none}
+.lock-card{
+  width:100%;max-width:340px;padding:28px 24px 24px;border-radius:26px;text-align:center;
+  background:var(--surface);border:1px solid var(--line-2);
+  -webkit-backdrop-filter:blur(30px) saturate(180%); backdrop-filter:blur(30px) saturate(180%);
+  box-shadow:0 20px 60px rgba(0,0,0,.18);
+}
+.lock-card .glyph{width:56px;height:56px;margin:0 auto 14px;border-radius:16px;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--accent),var(--violet));color:#fff;box-shadow:0 8px 22px rgba(10,132,255,.35)}
+.lock-card h1{margin:0 0 6px;font-size:19px;font-weight:700;letter-spacing:-.02em}
+.lock-card p{margin:0 0 18px;font-size:12.5px;color:var(--text-2);line-height:1.6}
+.field{
+  width:100%;height:46px;padding:0 14px;margin-bottom:10px;border-radius:13px;
+  background:var(--bg-elev);border:1px solid var(--line);color:var(--text);
+  font-size:16px;letter-spacing:.02em;outline:none;
+  transition:border-color .2s var(--ease), box-shadow .2s var(--ease);
+}
+.field:focus{border-color:var(--accent);box-shadow:0 0 0 3.5px var(--accent-soft)}
+.btn{
+  width:100%;height:46px;border-radius:13px;background:var(--accent);color:#fff;font-size:15px;font-weight:600;
+  display:grid;place-items:center;transition:transform .12s var(--ease),opacity .2s var(--ease);
+}
+.btn:active{transform:scale(.975)} .btn:disabled{opacity:.5}
+.btn.ghost{background:var(--line-2);color:var(--text)}
+.btn.danger{background:var(--danger-soft);color:var(--danger)}
+.btn.sm{height:40px;font-size:14px;border-radius:11px}
+.err{min-height:18px;margin-top:10px;font-size:12.5px;color:var(--danger);font-weight:500}
+.hint{margin-top:14px;font-size:11.5px;color:var(--text-3);line-height:1.6}
+.link{color:var(--accent);font-size:12px;font-weight:600}
+@keyframes shake{10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}
+  30%,50%,70%{transform:translateX(-7px)}40%,60%{transform:translateX(7px)}}
+.shake{animation:shake .5s cubic-bezier(.36,.07,.19,.97) both}
+.strength{display:flex;gap:4px;margin:-2px 0 12px}
+.strength i{flex:1;height:3px;border-radius:2px;background:var(--line);transition:background .3s var(--ease)}
+.strength.s1 i:nth-child(1){background:var(--danger)}
+.strength.s2 i:nth-child(-n+2){background:var(--warn)}
+.strength.s3 i:nth-child(-n+3){background:var(--ok)}
+.strength.s4 i{background:var(--ok)}
+
+/* ------------------------------- 设置面板 ------------------------------ */
+.scrim{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.35);
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);opacity:0;transition:opacity .32s var(--ease)}
+.scrim.on{opacity:1}
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;z-index:61;max-height:88vh;
+  max-width:560px;margin:0 auto;border-radius:24px 24px 0 0;background:var(--bg);
+  box-shadow:var(--shadow-lg);display:flex;flex-direction:column;
+  transform:translateY(100%);transition:transform .42s var(--ease);
+}
+.sheet.on{transform:none}
+.sheet-head{position:relative;padding:14px 18px 10px;text-align:center;flex:0 0 auto;border-bottom:1px solid var(--line-2)}
+.grabber{width:36px;height:5px;border-radius:3px;background:var(--line);margin:0 auto 10px}
+.sheet-head h2{margin:0;font-size:16px;font-weight:700;letter-spacing:-.01em}
+.sheet-head .close{position:absolute;right:12px;top:26px}
+.sheet-body{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 16px calc(28px + var(--sab))}
+.group{margin:16px 0 0}
+.group>h3{margin:0 0 8px;padding:0 4px;font-size:11.5px;font-weight:700;color:var(--text-3);letter-spacing:.06em}
+.panel{background:var(--bg-elev);border:1px solid var(--line-2);border-radius:var(--r-md);overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:13px 14px;width:100%;text-align:left;
+  transition:background .16s var(--ease)}
+.row+.row{border-top:1px solid var(--line-2)}
+.row:active{background:var(--line-2)}
+.row .ic{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;flex:0 0 auto;
+  background:var(--accent-soft);color:var(--accent)}
+.row .ic.w{background:var(--warn-soft);color:var(--warn)}
+.row .ic.d{background:var(--danger-soft);color:var(--danger)}
+.row .ic.g{background:var(--line-2);color:var(--text-2)}
+.row .tx{flex:1;min-width:0}
+.row .tx b{display:block;font-size:14.5px;font-weight:600;letter-spacing:-.01em}
+.row .tx span{display:block;font-size:11.5px;color:var(--text-3);margin-top:2px;line-height:1.45}
+.row .chev{color:var(--text-3);flex:0 0 auto}
+.pad{padding:14px}
+textarea.field{height:140px;padding:12px 14px;line-height:1.5;resize:vertical;
+  font:12px/1.55 ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;letter-spacing:0}
+.btn-row{display:flex;gap:8px;margin-top:10px}
+.stat{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line-2);border-radius:var(--r-md);overflow:hidden}
+.stat div{background:var(--bg-elev);padding:12px 8px;text-align:center}
+.stat b{display:block;font-size:19px;font-weight:700;letter-spacing:-.02em}
+.stat span{font-size:11px;color:var(--text-3)}
+pre.code{
+  margin:0;padding:12px 14px;background:var(--bg-elev);border:1px solid var(--line-2);border-radius:var(--r-md);
+  font:11.5px/1.6 ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  white-space:pre;overflow-x:auto;color:var(--text-2);max-height:340px;overflow-y:auto;
+}
+.foot{padding:22px 8px 4px;text-align:center;font-size:11px;color:var(--text-3);line-height:1.7}
+
+/* -------------------------------- Toast ------------------------------- */
+.toast{
+  position:fixed;left:50%;bottom:calc(var(--nav-h) + var(--sab) + 18px);z-index:200;
+  transform:translate(-50%,14px);opacity:0;pointer-events:none;
+  max-width:calc(100vw - 40px);padding:11px 18px;border-radius:14px;
+  background:rgba(28,28,30,.94);color:#fff;font-size:13.5px;font-weight:500;text-align:center;
+  box-shadow:0 10px 30px rgba(0,0,0,.3);transition:opacity .28s var(--ease),transform .28s var(--ease);
+  -webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
+}
+.toast.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.toast.err{background:rgba(255,59,48,.96)}
+.toast.ok{background:rgba(40,160,80,.96)}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;transition-duration:.01ms !important}
+}
+</style>
+</head>
+<body>
+
+<!-- ======================= 主界面（解锁后可见） ======================= -->
+<main class="app" id="app" aria-hidden="true">
+
+  <header class="topbar">
+    <h1 class="month" id="monthLabel">—</h1>
+    <button class="today-btn" id="btnToday" type="button">今天</button>
+    <button class="icon-btn" id="btnPrev" type="button" aria-label="上个月">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <button class="icon-btn" id="btnNext" type="button" aria-label="下个月">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+    </button>
+  </header>
+
+  <section class="cal" id="cal">
+    <div class="dow" id="dowRow"></div>
+    <div class="grid" id="grid" role="grid" aria-label="月视图日历"></div>
+  </section>
+
+  <section class="day-head">
+    <h2 id="dayLabel">—</h2>
+    <span class="rel" id="dayRel" hidden></span>
+    <span class="cnt" id="dayCount"></span>
+  </section>
+
+  <div id="panel"></div>
+</main>
+
+<!-- ============================ 底部导航栏 ============================ -->
+<nav class="nav" id="nav" aria-hidden="true">
+  <div class="nav-inner">
+    <button class="nav-btn on" id="tabCourse" type="button" data-mode="course">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/><circle cx="8.5" cy="14" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="14" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="14" r="1.1" fill="currentColor" stroke="none"/></svg>
+      课程日历
+    </button>
+    <button class="nav-btn mode-due" id="tabDue" type="button" data-mode="due">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 3H6a2.5 2.5 0 0 0-2.5 2.5v13A2.5 2.5 0 0 0 6 21h12a2.5 2.5 0 0 0 2.5-2.5V8z"/><path d="M15 3v5h5.5M8.5 13l2.2 2.2L15.5 11"/></svg>
+      作业日历
+    </button>
+    <button class="nav-btn" id="tabSet" type="button" data-mode="settings">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-1 1.47V21a2 2 0 1 1-4 0v-.11a1.6 1.6 0 0 0-1.05-1.46 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.6 1.6 0 0 0 4.6 15a1.6 1.6 0 0 0-1.47-1H3a2 2 0 1 1 0-4h.11A1.6 1.6 0 0 0 4.6 8.9a1.6 1.6 0 0 0-.33-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.6 1.6 0 0 0 8.87 4.6 1.6 1.6 0 0 0 9.87 3.13V3a2 2 0 1 1 4 0v.11a1.6 1.6 0 0 0 1 1.47 1.6 1.6 0 0 0 1.77-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47 1H21a2 2 0 1 1 0 4h-.11a1.6 1.6 0 0 0-1.49 1z"/></svg>
+      设置 / 导入
+    </button>
+  </div>
+</nav>
+
+<!-- ====================== 磨砂玻璃锁屏 / 首次设置 ====================== -->
+<div class="lock" id="lock">
+  <div class="lock-card" id="lockCard">
+    <div class="glyph">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="10.5" rx="2.6"/><path d="M8 10.5V7a4 4 0 1 1 8 0v3.5"/></svg>
+    </div>
+    <h1 id="lockTitle">解锁课程日历</h1>
+    <p id="lockDesc">数据以 AES-256-GCM 加密保存在本机，输入主密码后仅在内存中解密。</p>
+
+    <form id="lockForm" autocomplete="off">
+      <input class="field" id="pw1" type="password" inputmode="text" autocomplete="current-password"
+             placeholder="主密码" aria-label="主密码" enterkeyhint="go">
+      <div class="strength" id="strength" hidden><i></i><i></i><i></i><i></i></div>
+      <input class="field" id="pw2" type="password" autocomplete="new-password"
+             placeholder="确认主密码" aria-label="确认主密码" hidden enterkeyhint="go">
+      <button class="btn" id="lockBtn" type="submit">解锁</button>
+    </form>
+
+    <div class="err" id="lockErr" role="alert"></div>
+    <div class="hint" id="lockHint">
+      主密码不会离开本机，也无法找回。<br>
+      <button class="link" id="btnForget" type="button">忘记密码？重置本机数据</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ 设置面板 ============================= -->
+<div class="scrim" id="scrim" hidden></div>
+<section class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-label="设置与数据导入">
+  <div class="sheet-head">
+    <div class="grabber"></div>
+    <h2>设置 / 数据</h2>
+    <button class="icon-btn close" id="btnCloseSheet" type="button" aria-label="关闭">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+  </div>
+
+  <div class="sheet-body">
+    <div class="group">
+      <h3>本机数据</h3>
+      <div class="stat">
+        <div><b id="stCourse">0</b><span>门课程</span></div>
+        <div><b id="stDue">0</b><span>项作业</span></div>
+        <div><b id="stLeft">0</b><span>项未完成</span></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>导入（粘贴 JSON / 上传文件）</h3>
+      <div class="panel pad">
+        <textarea class="field" id="importText" placeholder='在此粘贴 AI 生成的 JSON，例如：&#10;{ "version": 1, "courses": [...], "assignments": [...] }' spellcheck="false"></textarea>
+        <div class="btn-row">
+          <button class="btn sm" id="btnMerge" type="button">合并导入</button>
+          <button class="btn sm ghost" id="btnReplace" type="button">覆盖导入</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn sm ghost" id="btnPickFile" type="button">上传 .json 文件</button>
+          <input type="file" id="fileInput" accept="application/json,.json" hidden>
+        </div>
+        <p class="hint" style="text-align:left;margin-top:12px">
+          合并：按 <code>id</code> 增量更新，保留已勾选的完成状态。<br>
+          覆盖：清空现有数据后整体替换。
+        </p>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>AI 提取 &amp; 备份</h3>
+      <div class="panel">
+        <button class="row" id="btnCopyPrompt" type="button">
+          <span class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6L18.5 9l-4.6 1.9L12 15.5l-1.9-4.6L5.5 9l4.6-1.4L12 3zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15z"/></svg></span>
+          <span class="tx"><b>复制 PDF → JSON 提取 Prompt</b><span>喂给多模态 AI 连同课程大纲 PDF，输出可直接导入</span></span>
+          <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></span>
+        </button>
+        <button class="row" id="btnSchema" type="button">
+          <span class="ic g"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3M8 12h5M8 16h8M14 3h7v7M21 3l-9 9"/></svg></span>
+          <span class="tx"><b>查看数据契约 Schema</b><span>字段定义与取值范围</span></span>
+          <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></span>
+        </button>
+        <button class="row" id="btnExport" type="button">
+          <span class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7.5 10.5L12 15l4.5-4.5M4 20h16"/></svg></span>
+          <span class="tx"><b>导出明文 JSON 备份</b><span>下载到本机，请自行妥善保管</span></span>
+          <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></span>
+        </button>
+      </div>
+      <pre class="code" id="schemaBox" hidden></pre>
+    </div>
+
+    <div class="group">
+      <h3>安全</h3>
+      <div class="panel">
+        <button class="row" id="btnChangePw" type="button">
+          <span class="ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="10.5" rx="2.6"/><path d="M8 10.5V7a4 4 0 1 1 8 0"/></svg></span>
+          <span class="tx"><b>修改主密码</b><span>使用新密钥重新加密本机全部数据</span></span>
+          <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></span>
+        </button>
+        <div id="pwForm" hidden>
+          <div class="pad">
+            <input class="field" id="cpOld" type="password" placeholder="当前主密码" autocomplete="current-password">
+            <input class="field" id="cpNew" type="password" placeholder="新主密码（至少 8 位）" autocomplete="new-password">
+            <input class="field" id="cpNew2" type="password" placeholder="确认新主密码" autocomplete="new-password">
+            <div class="btn-row"><button class="btn sm" id="cpSubmit" type="button">确认修改</button></div>
+          </div>
+        </div>
+        <button class="row" id="btnLockNow" type="button">
+          <span class="ic g"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="10.5" rx="2.6"/><path d="M8 10.5V7a4 4 0 1 1 8 0v3.5"/></svg></span>
+          <span class="tx"><b>立即锁定</b><span>清除内存中的明文与密钥</span></span>
+          <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></span>
+        </button>
+        <button class="row" id="btnWipe" type="button">
+          <span class="ic d"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l.8 12.1A2 2 0 0 0 9.3 21h5.4a2 2 0 0 0 2-1.9L17.5 7"/></svg></span>
+          <span class="tx"><b>清空本机全部数据</b><span>删除密文与主密码，不可恢复</span></span>
+          <span class="chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg></span>
+        </button>
+      </div>
+    </div>
+
+    <p class="foot">
+      课程与作业日历 · <span id="verLabel">v1.0.0</span><br>
+      纯前端 · 零后端 · 零埋点 · AES-256-GCM + PBKDF2-SHA256<span id="iterLabel"></span><br>
+      <span id="netLabel"></span>
+    </p>
+  </div>
+</section>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- ===================================================================== -->
+<!-- 数据契约（JSON Schema 摘要）—— 与 normalize() 的解析逻辑一一对应        -->
+<!-- ===================================================================== -->
+<script type="text/plain" id="schema-doc">
+{
+  "version": 1,                       // 必填，固定为 1
+  "meta": {                           // 可选
+    "term": "2026W1",                 // 学期代号
+    "termStart": "2026-09-08",        // 教学周计数与 weeks 字段的锚点（周一对齐）
+    "termEnd":   "2026-12-07",
+    "timezone":  "America/Vancouver", // 仅作提示；所有时间按“本地时间”解释
+    "source": "由课程大纲 PDF 提取"
+  },
+
+  "courses": [{
+    "id": "busi291",                  // 必填，全局唯一，小写英数
+    "code": "BUSI 291",               // 可选，课程代号
+    "name": "Applications of Statistics in Business",  // 必填
+    "nameZh": "商业统计学应用",         // 可选，中文名（界面优先显示）
+    "instructor": "Martha Essak",     // 可选
+    "email": "x@y.z",                 // 可选
+    "location": "HA 343",             // 可选，默认地点
+    "color": "blue",                  // 可选：blue|violet|teal|pink|green，缺省按名称哈希
+    "note": "混合式授课",              // 可选
+    "schedule": [                     // 必填，至少 1 条排课规则
+      {
+        "type": "weekly",             // weekly = 周期性
+        "byweekday": [1, 3],          // ISO 星期：1=周一 … 7=周日
+        "start": "12:00",             // HH:mm，24 小时制
+        "end":   "13:30",
+        "startDate": "2026-09-09",    // 可选，缺省取 meta.termStart
+        "endDate":   "2026-12-07",    // 可选，缺省取 meta.termEnd
+        "interval": 1,                // 可选，1=每周，2=隔周
+        "weeks": [1,2,3],             // 可选，仅在这些教学周上课（相对 startDate）
+        "exdates": ["2026-09-30"],    // 可选，法定假日 / 停课日
+        "location": "HA 343"          // 可选，覆盖课程默认地点
+      },
+      { "type": "once", "date": "2026-10-19", "start": "18:30", "end": "21:20",
+        "location": "HA 343", "title": "期中考试" }   // 单次排课
+    ],
+    "sessions": [                     // 可选：为某次课追加信息，按日期与上面的规则合并
+      { "date": "2026-09-14", "topic": "课程概览", "mode": "in-person",
+        "location": "HA 343", "readings": "Ch. 1-2", "note": "" }
+    ]
+  }],
+
+  "assignments": [{
+    "id": "busi291-a01",              // 必填，全局唯一
+    "courseId": "busi291",            // 可选，关联课程（用于取色 / 显示课程名）
+    "course": "BUSI 291",             // 可选，courseId 缺失时的显示名
+    "title": "Assignment 01 (Ch. 1-3)", // 必填
+    "due": "2026-09-29T23:59",        // 必填，本地时间 ISO；也接受 "2026-09-29"（视为 23:59）
+    "type": "assignment",             // 可选：assignment|quiz|exam|presentation|project|reading
+    "weight": "15%",                  // 可选，占分比
+    "location": "HA 343",             // 可选，线下考试地点
+    "note": "Canvas 提交，不接受迟交",  // 可选
+    "tentative": false,               // 可选，true = 日期待定（界面标注“待定”）
+    "done": false                     // 可选，完成状态；由 App 维护
+  }]
+}
+</script>
+
+<!-- ===================================================================== -->
+<!-- 多模态 AI 提取 Prompt —— 设置面板中「复制 Prompt」直接读取此处文本      -->
+<!-- ===================================================================== -->
+<script type="text/plain" id="ai-prompt">
+你是一名严谨的课程大纲结构化解析引擎。我会给你一份或多份课程大纲（Syllabus）PDF / 图片。
+请把它们转换成一个可直接导入我的离线课程日历 App 的 JSON 对象。
+
+【最高优先级规则】
+1. 只输出一个 JSON 对象，不要输出任何解释、前后缀或 Markdown 代码围栏。
+2. 严禁编造。大纲里没写的信息一律省略该字段，不要填 "TBD"、"N/A"、null 或猜测值。
+3. 只解析与日程相关的内容：课程信息表、教师信息、Assessments 权重与截止日期、Course Schedule 表格。
+   完全忽略这些模板化章节：Acknowledgement、Academic Integrity / Misconduct、Use of GenAI、
+   Professionalism、Accommodation、Copyright、Wellbeing、学习资源与政策声明等。
+4. 所有日期一律输出 "YYYY-MM-DD"；年份以大纲的 Session/Term（如 2026W1）为准，跨年时 1-4 月归入次年。
+5. 所有时间一律输出 24 小时制 "HH:mm"（6:30pm → "18:30"）。
+   截止时间未注明的，一律用 "23:59"，并在 note 里写明"大纲未注明具体时间，默认 23:59"。
+6. 一次课跨越多个星期几时（如 "Mondays and Wednesdays"），用一条 weekly 规则、byweekday 写多个值。
+7. 大纲里写明 "No class / Holiday / Break / 停课" 的日期，放进对应 weekly 规则的 exdates，
+   不要作为一次上课；但如果那天仍有作业截止，作业照常保留。
+8. 考试（Midterm / Term Test / Final）要双写：
+   - 在 courses[].schedule 里加一条 { "type": "once", ... , "title": "期中考试" }（若知道时间地点）；
+   - 同时在 assignments 里加一条 "type": "exam" 的记录，便于在作业日历里看到。
+   期末考试若只给出考试周区间（如 Dec 11-22）而无具体日期，则 due 取区间首日、
+   "tentative": true，并在 note 写明区间与"以学校公布为准"。
+9. id 用小写英数与连字符，须全局唯一，建议 "课程代号-序号"，如 "busi291-a01"。
+10. 时间冲突、疑似笔误（例如某个日期的星期几与上课日不符）不要擅自静默修正：
+    按最合理的值输出，并在该条目的 note 里写明"大纲原文为 X，疑为笔误"。
+
+【输出格式：严格遵循此 Schema】
+{
+  "version": 1,
+  "meta": { "term": "2026W1", "termStart": "YYYY-MM-DD", "termEnd": "YYYY-MM-DD",
+            "timezone": "America/Vancouver", "source": "课程大纲 PDF" },
+  "courses": [
+    {
+      "id": "busi291",
+      "code": "BUSI 291",
+      "name": "Applications of Statistics in Business",
+      "nameZh": "商业统计学应用",
+      "instructor": "Martha Essak",
+      "email": "martha.essak@sauder.ubc.ca",
+      "location": "HA 343",
+      "color": "blue",
+      "note": "混合式授课，部分线上",
+      "schedule": [
+        { "type": "weekly", "byweekday": [1], "start": "18:30", "end": "21:20",
+          "startDate": "2026-09-14", "endDate": "2026-12-07",
+          "exdates": ["2026-10-12", "2026-11-09"], "location": "HA 343" }
+      ],
+      "sessions": [
+        { "date": "2026-09-14", "topic": "课程概览；数据类型与变量", "mode": "in-person",
+          "readings": "Ch. 1-2" }
+      ]
+    }
+  ],
+  "assignments": [
+    { "id": "busi291-a01", "courseId": "busi291", "course": "BUSI 291",
+      "title": "Assignment 01 (Ch. 1-3)", "due": "2026-09-29T23:59",
+      "type": "assignment", "weight": "15%", "note": "Canvas 提交，不接受迟交" }
+  ]
+}
+
+【字段取值约束】
+- courses[].schedule[].type: "weekly" | "once"
+- byweekday: 1=周一, 2=周二, 3=周三, 4=周四, 5=周五, 6=周六, 7=周日
+- color: "blue" | "violet" | "teal" | "pink" | "green"
+- assignments[].type: "assignment" | "quiz" | "exam" | "presentation" | "project" | "reading"
+- sessions[].mode: "in-person" | "online" | "async"
+- 不要输出 "done" 字段（由 App 自行维护）。
+
+【自检清单：输出前逐条确认】
+□ 是合法 JSON，能被 JSON.parse 解析，且没有代码围栏和注释
+□ 每门课至少有一条 schedule；每条 weekly 规则都有 byweekday / start / end
+□ 每个 assignment 都有 id / title / due，且 due 的日期真实存在
+□ 每个 id 全局唯一
+□ 所有 "No class" 日期都进了 exdates，没有被当成上课日
+□ 没有出现大纲中不存在的课程、作业或日期
+</script>
+
+<script>
+/* ============================================================================
+ *  课程与作业日历 —— 单文件应用内核
+ *
+ *  架构分层（自下而上，层间只通过纯数据通信）：
+ *    L0 util     : 日期 / DOM / 格式化纯函数
+ *    L1 crypto   : Web Crypto 封装（PBKDF2-SHA256 → AES-256-GCM）
+ *    L2 vault    : 密文在 localStorage 的读写；明文只存在于内存 S.data
+ *    L3 contract : 外部 JSON → 内部规范化模型（唯一的信任边界与校验点）
+ *    L4 engine   : 排课展开、DDL 归集（纯函数，无 DOM 依赖）
+ *    L5 view     : 渲染与事件（唯一接触 DOM 的层）
+ *
+ *  隐私模型（Zero-Knowledge）：
+ *    · 主密码永不落盘，只用于在内存中派生 CryptoKey
+ *    · localStorage 中只有 { salt, iv, ciphertext }，无校验和、无明文特征
+ *    · 密码是否正确由 AES-GCM 的认证标签判定（解密失败即抛错）
+ *    · 刷新 / 关闭页面 = 内存清空 = 自动锁定
+ * ==========================================================================*/
+(() => {
+'use strict';
+
+/* ------------------------------ L0  util -------------------------------- */
+const $  = (id) => document.getElementById(id);
+const el = (tag, cls, txt) => { const n = document.createElement(tag);
+  if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n; };
+
+const VERSION   = 'v1.0.0';
+const STORE_KEY = 'ccal.v1.vault';
+const PREF_KEY  = 'ccal.v1.prefs';
+const KDF_ITER  = 310000;           // OWASP 2023 建议下限（PBKDF2-SHA256）
+const AUTOLOCK_MS = 5 * 60 * 1000;  // 后台超过 5 分钟自动上锁
+
+const pad2   = (n) => (n < 10 ? '0' : '') + n;
+const fmtKey = (d) => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+const parseKey = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
+const todayKey = () => fmtKey(new Date());
+const addDays  = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+/** ISO 星期：1=周一 … 7=周日 */
+const isoDow   = (k) => (parseKey(k).getDay() + 6) % 7 + 1;
+/** 该日期所在周的周一（用于教学周计数） */
+const mondayOf = (k) => addDays(parseKey(k), -(isoDow(k) - 1));
+const weekIndex = (k, anchorKey) =>
+  Math.floor((mondayOf(k) - mondayOf(anchorKey)) / 604800000) + 1;
+
+const CN_DOW  = ['一', '二', '三', '四', '五', '六', '日'];
+const CN_DOW2 = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+const TYPE_CN = { assignment:'作业', quiz:'测验', exam:'考试',
+                  presentation:'展示', project:'项目', reading:'阅读' };
+const MODE_CN = { 'in-person':'线下', online:'线上', async:'异步' };
+
+const escapeAttr = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const uid = () => (crypto.randomUUID ? crypto.randomUUID()
+  : 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8));
+
+/* ------------------------------ L1  crypto ------------------------------ */
+const enc = new TextEncoder(), dec = new TextDecoder();
+const b64e = (buf) => { const b = new Uint8Array(buf); let s = '';
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); };
+const b64d = (str) => { const s = atob(str); const b = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; };
+
+async function deriveKey(password, salt, iter) {
+  const base = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function aesEncrypt(key, plainObj) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key,
+    enc.encode(JSON.stringify(plainObj)));
+  return { iv: b64e(iv), ct: b64e(ct) };
+}
+async function aesDecrypt(key, ivB64, ctB64) {           // 密码错误时在此抛出
+  const buf = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: b64d(ivB64) }, key, b64d(ctB64));
+  return JSON.parse(dec.decode(buf));
+}
+
+/* ------------------------------ L2  vault ------------------------------- */
+const readVault = () => { try { return JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); }
+  catch (_) { return null; } };
+const writeVault = (v) => localStorage.setItem(STORE_KEY, JSON.stringify(v));
+const readPrefs  = () => { try { return JSON.parse(localStorage.getItem(PREF_KEY) || '{}'); }
+  catch (_) { return {}; } };
+const writePrefs = (p) => { try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch (_) {} };
+
+/** 运行时状态：明文与密钥只活在这里，刷新即蒸发 */
+const S = {
+  key: null, salt: null, iter: KDF_ITER,
+  data: null,
+  mode: readPrefs().mode === 'due' ? 'due' : 'course',
+  cursor: new Date(),
+  sel: todayKey(),
+  hiddenAt: 0
+};
+
+async function persist() {
+  if (!S.key || !S.data) return;
+  S.data.updatedAt = new Date().toISOString();
+  const { iv, ct } = await aesEncrypt(S.key, S.data);
+  try {
+    writeVault({ v: 1, cipher: 'AES-GCM', kdf: { name: 'PBKDF2', hash: 'SHA-256', iter: S.iter },
+      salt: b64e(S.salt), iv, ct, updatedAt: S.data.updatedAt });
+  } catch (e) {
+    toast('保存失败：本机存储空间不足', 'err');
+    throw e;
+  }
+}
+
+const emptyData = () => ({ version: 1, meta: {}, courses: [], assignments: [],
+  createdAt: new Date().toISOString() });
+
+/* ----------------------------- L3  contract ------------------------------
+ * 唯一的信任边界：任何外部 JSON 都必须经 normalize() 洗成内部模型。
+ * 返回 { data, errors[], warnings[] }；errors 非空则拒绝导入。
+ * ------------------------------------------------------------------------*/
+const DOW_ALIAS = {
+  '1':1,'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'0':7,
+  mon:1, tue:2, wed:3, thu:4, fri:5, sat:6, sun:7,
+  monday:1, tuesday:2, wednesday:3, thursday:4, friday:5, saturday:6, sunday:7,
+  '周一':1,'周二':2,'周三':3,'周四':4,'周五':5,'周六':6,'周日':7,'周天':7,
+  '一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'日':7,'天':7
+};
+const RE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function normDow(v) {
+  if (typeof v === 'number') return DOW_ALIAS[String(v)] || null;
+  const s = String(v).trim().toLowerCase().replace(/[.]/g, '');
+  return DOW_ALIAS[s] || DOW_ALIAS[s.slice(0, 3)] || null;
+}
+function normTime(v) {
+  if (v == null) return null;
+  const m = String(v).trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const h = +m[1], mi = +m[2];
+  if (h > 23 || mi > 59) return null;
+  return pad2(h) + ':' + pad2(mi);
+}
+function normDate(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (RE_DATE.test(s)) {
+    const d = parseKey(s);
+    return fmtKey(d) === s ? s : null;         // 拒绝 2026-02-31 之类的不存在日期
+  }
+  return null;
+}
+/** 截止时间 → { key:'YYYY-MM-DD', time:'HH:mm', ts:Number } */
+function normDue(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (RE_DATE.test(s)) { const k = normDate(s); return k ? { key: k, time: '23:59' } : null; }
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}):(\d{2})/);
+  if (m) {
+    const k = normDate(m[1]); const t = normTime(m[2] + ':' + m[3]);
+    if (!k || !t) return null;
+    return { key: k, time: t };
+  }
+  const d = new Date(s);                        // 兜底：带时区的 ISO 串 → 转本地时间
+  if (!isNaN(d)) return { key: fmtKey(d), time: pad2(d.getHours()) + ':' + pad2(d.getMinutes()) };
+  return null;
+}
+const dueTs = (a) => { const d = parseKey(a.dueKey);
+  const [h, mi] = a.dueTime.split(':').map(Number); d.setHours(h, mi, 0, 0); return d.getTime(); };
+
+const COLORS = ['blue', 'violet', 'teal', 'pink', 'green'];
+const colorClass = { blue: '', violet: 'c2', teal: 'c3', pink: 'c4', green: 'c5' };
+function pickColor(course, i) {
+  if (course.color && COLORS.includes(course.color)) return course.color;
+  const seed = (course.code || course.name || String(i));
+  let h = 0; for (let j = 0; j < seed.length; j++) h = (h * 31 + seed.charCodeAt(j)) >>> 0;
+  return COLORS[h % COLORS.length];
+}
+
+function normalize(raw) {
+  const errors = [], warnings = [];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    return { data: null, errors: ['顶层必须是一个 JSON 对象 { ... }'], warnings };
+
+  const meta = (raw.meta && typeof raw.meta === 'object') ? { ...raw.meta } : {};
+  meta.termStart = normDate(meta.termStart) || null;
+  meta.termEnd   = normDate(meta.termEnd) || null;
+
+  const seen = new Set();
+  const courses = [];
+  const rawCourses = Array.isArray(raw.courses) ? raw.courses : [];
+  if (!Array.isArray(raw.courses) && raw.courses != null) errors.push('courses 必须是数组');
+
+  rawCourses.forEach((c, i) => {
+    const at = 'courses[' + i + ']';
+    if (!c || typeof c !== 'object') { errors.push(at + ' 不是对象'); return; }
+    const name = String(c.nameZh || c.name || c.title || '').trim();
+    if (!name) { errors.push(at + ' 缺少 name'); return; }
+    let id = String(c.id || '').trim() || 'c-' + uid();
+    if (seen.has(id)) { warnings.push(at + ' id "' + id + '" 重复，已自动改名'); id += '-' + i; }
+    seen.add(id);
+
+    const blocks = [];
+    const rawSch = Array.isArray(c.schedule) ? c.schedule
+                 : Array.isArray(c.sessions) && !Array.isArray(c.schedule) ? [] : [];
+    rawSch.forEach((b, j) => {
+      const bt = at + '.schedule[' + j + ']';
+      if (!b || typeof b !== 'object') { errors.push(bt + ' 不是对象'); return; }
+      const start = normTime(b.start || b.from || b.startTime);
+      const end   = normTime(b.end || b.to || b.endTime);
+      const type  = (b.type === 'once' || b.date) ? 'once' : 'weekly';
+      if (type === 'once') {
+        const date = normDate(b.date);
+        if (!date) { errors.push(bt + ' 的 date 非法（需 YYYY-MM-DD）'); return; }
+        if (!start) { errors.push(bt + ' 缺少 start 时间'); return; }
+        blocks.push({ type: 'once', date, start, end: end || start,
+          location: b.location ? String(b.location) : null,
+          title: b.title ? String(b.title) : null });
+      } else {
+        const days = (Array.isArray(b.byweekday) ? b.byweekday
+          : b.byweekday != null ? [b.byweekday] : []).map(normDow).filter(Boolean);
+        if (!days.length) { errors.push(bt + ' 的 byweekday 非法（需 1-7 的数组）'); return; }
+        if (!start || !end) { errors.push(bt + ' 缺少 start / end 时间'); return; }
+        const sd = normDate(b.startDate) || meta.termStart;
+        const ed = normDate(b.endDate) || meta.termEnd;
+        const weeks = Array.isArray(b.weeks) ? b.weeks.map(Number).filter((n) => n > 0) : null;
+        if (weeks && weeks.length && !sd)
+          warnings.push(bt + ' 指定了 weeks 但缺少 startDate / meta.termStart，教学周计数已忽略');
+        blocks.push({ type: 'weekly', byweekday: [...new Set(days)].sort(), start, end,
+          startDate: sd, endDate: ed, interval: Math.max(1, Number(b.interval) || 1),
+          weeks: (weeks && weeks.length) ? weeks : null,
+          exdates: (Array.isArray(b.exdates) ? b.exdates.map(normDate).filter(Boolean) : []),
+          location: b.location ? String(b.location) : null,
+          title: b.title ? String(b.title) : null });
+      }
+    });
+    if (!blocks.length) warnings.push(at + '「' + name + '」没有任何有效排课规则');
+
+    const sessions = {};
+    (Array.isArray(c.sessions) ? c.sessions : []).forEach((s) => {
+      const d = normDate(s && s.date); if (!d) return;
+      sessions[d] = { topic: s.topic ? String(s.topic) : null,
+        mode: s.mode ? String(s.mode) : null,
+        location: s.location ? String(s.location) : null,
+        readings: s.readings ? String(s.readings) : null,
+        note: s.note ? String(s.note) : null };
+    });
+
+    const course = { id, code: c.code ? String(c.code) : null, name,
+      nameEn: (c.nameZh && c.name) ? String(c.name) : null,
+      instructor: c.instructor ? String(c.instructor) : null,
+      email: c.email ? String(c.email) : null,
+      location: c.location ? String(c.location) : null,
+      note: c.note ? String(c.note) : null,
+      schedule: blocks, sessions };
+    course.color = pickColor({ ...c, code: course.code, name: course.name }, i);
+    courses.push(course);
+  });
+
+  const byId = new Map(courses.map((c) => [c.id, c]));
+  const assignments = [];
+  const rawAsg = Array.isArray(raw.assignments) ? raw.assignments : [];
+  if (!Array.isArray(raw.assignments) && raw.assignments != null) errors.push('assignments 必须是数组');
+
+  rawAsg.forEach((a, i) => {
+    const at = 'assignments[' + i + ']';
+    if (!a || typeof a !== 'object') { errors.push(at + ' 不是对象'); return; }
+    const title = String(a.title || a.name || '').trim();
+    if (!title) { errors.push(at + ' 缺少 title'); return; }
+    const due = normDue(a.due || a.dueDate || a.deadline);
+    if (!due) { errors.push(at + '「' + title + '」的 due 非法（需 YYYY-MM-DD 或 YYYY-MM-DDTHH:mm）'); return; }
+    let id = String(a.id || '').trim() || 'a-' + uid();
+    if (seen.has(id)) { warnings.push(at + ' id "' + id + '" 重复，已自动改名'); id += '-' + i; }
+    seen.add(id);
+    const courseId = a.courseId && byId.has(String(a.courseId)) ? String(a.courseId) : null;
+    if (a.courseId && !courseId) warnings.push(at + ' 的 courseId "' + a.courseId + '" 找不到对应课程');
+    assignments.push({ id, courseId,
+      course: a.course ? String(a.course) : (courseId ? (byId.get(courseId).code || byId.get(courseId).name) : null),
+      title, dueKey: due.key, dueTime: due.time,
+      type: TYPE_CN[a.type] ? a.type : 'assignment',
+      weight: a.weight ? String(a.weight) : null,
+      location: a.location ? String(a.location) : null,
+      note: a.note ? String(a.note) : null,
+      tentative: a.tentative === true,
+      done: a.done === true });
+  });
+
+  if (!courses.length && !assignments.length && !errors.length)
+    errors.push('没有解析到任何课程或作业');
+
+  return { data: { version: 1, meta, courses, assignments,
+    createdAt: (S.data && S.data.createdAt) || new Date().toISOString() }, errors, warnings };
+}
+
+/* ------------------------------- L4  engine ------------------------------ */
+function blockHits(b, key, meta) {
+  if (b.type === 'once') return b.date === key;
+  if (!b.byweekday.includes(isoDow(key))) return false;
+  if (b.startDate && key < b.startDate) return false;
+  if (b.endDate && key > b.endDate) return false;
+  if (b.exdates && b.exdates.includes(key)) return false;
+  const anchor = b.startDate || meta.termStart;
+  if (anchor && (b.weeks || b.interval > 1)) {
+    const wi = weekIndex(key, anchor);
+    if (wi < 1) return false;
+    if (b.weeks && !b.weeks.includes(wi)) return false;
+    if (b.interval > 1 && (wi - 1) % b.interval !== 0) return false;
+  }
+  return true;
+}
+/** 某天的全部课程发生（已按开始时间排序） */
+function coursesOn(key) {
+  if (!S.data) return [];
+  const meta = S.data.meta || {};
+  const out = [];
+  for (const c of S.data.courses) {
+    for (const b of c.schedule) {
+      if (!blockHits(b, key, meta)) continue;
+      const s = c.sessions[key] || {};
+      out.push({ course: c, start: b.start, end: b.end,
+        title: b.title || s.topic || null,
+        location: s.location || b.location || c.location || null,
+        mode: s.mode || null, readings: s.readings || null,
+        note: [s.note, c.note].filter(Boolean).join(' · ') || null });
+    }
+  }
+  return out.sort((x, y) => x.start.localeCompare(y.start) || x.course.name.localeCompare(y.course.name));
+}
+/** 某天的全部 DDL（未完成优先靠前的排序交给渲染层，此处按时间） */
+function duesOn(key) {
+  if (!S.data) return [];
+  return S.data.assignments.filter((a) => a.dueKey === key)
+    .sort((x, y) => x.dueTime.localeCompare(y.dueTime) || x.title.localeCompare(y.title));
+}
+
+/* -------------------------------- L5  view ------------------------------- */
+let toastTimer = 0;
+function toast(msg, kind) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast on' + (kind ? ' ' + kind : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast' + (kind ? ' ' + kind : ''); }, 2600);
+}
+
+function renderDow() {
+  const row = $('dowRow');
+  row.innerHTML = '';
+  CN_DOW.forEach((d, i) => { const s = el('span', i >= 5 ? 'we' : '', d); row.appendChild(s); });
+}
+
+function renderCalendar() {
+  const grid = $('grid');
+  const y = S.cursor.getFullYear(), m = S.cursor.getMonth();
+  $('monthLabel').innerHTML = '<span class="ym">' + y + ' 年 ' + (m + 1) + ' 月</span><small>' +
+    (S.mode === 'course' ? '课程模式' : '作业模式') + '</small>';
+
+  const first = new Date(y, m, 1);
+  const lead  = (first.getDay() + 6) % 7;          // 周一为一周之始
+  const start = addDays(first, -lead);
+  const tKey  = todayKey();
+
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < 42; i++) {
+    const d = addDays(start, i), key = fmtKey(d);
+    const cell = el('button', 'cell');
+    cell.type = 'button';
+    cell.dataset.key = key;
+    cell.setAttribute('role', 'gridcell');
+    if (d.getMonth() !== m) cell.classList.add('out');
+    if (key === tKey) cell.classList.add('today');
+    if (key === S.sel) cell.classList.add('sel');
+
+    cell.appendChild(el('span', 'n', String(d.getDate())));
+    const dots = el('div', 'dots');
+
+    if (S.mode === 'course') {
+      const list = coursesOn(key);
+      const uniq = [];
+      list.forEach((o) => { if (!uniq.some((c) => c.id === o.course.id)) uniq.push(o.course); });
+      uniq.slice(0, 3).forEach((c) => dots.appendChild(el('i', 'dot ' + (colorClass[c.color] || 'c'))));
+      cell.setAttribute('aria-label', key + '，' + list.length + ' 节课');
+    } else {
+      const list = duesOn(key);
+      if (list.length) {
+        const undone  = list.filter((a) => !a.done);
+        const overdue = undone.length && key < tKey;
+        const n = Math.min(3, list.length);
+        for (let k = 0; k < n; k++)
+          dots.appendChild(el('i', 'dot ' + (!undone.length ? 'done' : overdue ? 'overdue' : 'd')));
+      }
+      cell.setAttribute('aria-label', key + '，' + list.length + ' 项作业');
+    }
+    cell.appendChild(dots);
+    frag.appendChild(cell);
+  }
+  grid.innerHTML = '';
+  grid.appendChild(frag);
+}
+
+function relLabel(key) {
+  const t = todayKey();
+  if (key === t) return '今天';
+  if (key === fmtKey(addDays(new Date(), 1))) return '明天';
+  if (key === fmtKey(addDays(new Date(), -1))) return '昨天';
+  return null;
+}
+function countdown(a) {
+  if (a.done) return { text: '已完成', cls: '' };
+  const diff = dueTs(a) - Date.now();
+  if (diff < 0) {
+    const days = Math.floor(-diff / 86400000);
+    return { text: days >= 1 ? '已逾期 ' + days + ' 天' : '已截止', cls: 'danger' };
+  }
+  const h = diff / 3600000;
+  if (h < 1)  return { text: '不到 1 小时', cls: 'danger' };
+  if (h < 24) return { text: '剩 ' + Math.floor(h) + ' 小时', cls: 'warn' };
+  const d = Math.floor(h / 24);
+  return { text: '剩 ' + d + ' 天', cls: d <= 3 ? 'warn' : '' };
+}
+
+function courseCard(o) {
+  const card = el('div', 'card ' + (colorClass[o.course.color] || ''));
+  const row  = el('div', 'card-row');
+  const time = el('div', 'time');
+  time.appendChild(document.createTextNode(o.start));
+  time.appendChild(el('small', '', o.end));
+  const body = el('div', 'body');
+  body.appendChild(el('div', 'title', (o.course.code ? o.course.code + ' · ' : '') + o.course.name));
+
+  const sub = el('div', 'sub');
+  if (o.course.nameEn) sub.appendChild(el('span', '', o.course.nameEn));
+  if (o.title) sub.appendChild(el('span', '', '📌 ' + o.title));
+  if (o.location) sub.appendChild(el('span', '', '📍 ' + o.location));
+  if (o.course.instructor) sub.appendChild(el('span', '', '👤 ' + o.course.instructor));
+  if (o.mode) sub.appendChild(el('span', 'tag' + (o.mode === 'in-person' ? ' blue' : ''),
+    MODE_CN[o.mode] || o.mode));
+  if (sub.childNodes.length) body.appendChild(sub);
+
+  const notes = [o.readings ? '📖 ' + o.readings : null, o.note].filter(Boolean).join('　');
+  if (notes) body.appendChild(el('div', 'note', notes));
+
+  row.appendChild(time); row.appendChild(body); card.appendChild(row);
+  return card;
+}
+
+function dueCard(a) {
+  const cd = countdown(a);
+  const card = el('div', 'card ' + (a.done ? 'due done' : cd.cls === 'danger' ? 'overdue' : 'due'));
+  const row  = el('div', 'card-row');
+
+  const chk = el('button', 'check' + (a.done ? ' on' : ''));
+  chk.type = 'button';
+  chk.setAttribute('aria-pressed', String(a.done));
+  chk.setAttribute('aria-label', (a.done ? '标记未完成：' : '标记完成：') + a.title);
+  chk.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+  chk.addEventListener('click', () => toggleDone(a.id));
+
+  const body = el('div', 'body');
+  const head = el('div', 'sub');
+  head.style.marginTop = '0';
+  if (a.course) head.appendChild(el('span', 'tag blue', a.course));
+  head.appendChild(el('span', 'tag', TYPE_CN[a.type] || '作业'));
+  if (a.weight) head.appendChild(el('span', 'tag', a.weight));
+  if (a.tentative) head.appendChild(el('span', 'tag warn', '时间待定'));
+  body.appendChild(head);
+  body.appendChild(el('div', 'title', a.title));
+
+  const sub = el('div', 'sub');
+  sub.appendChild(el('span', '', '⏰ ' + a.dueTime + ' 截止'));
+  sub.appendChild(el('span', 'tag' + (cd.cls ? ' ' + cd.cls : ''), cd.text));
+  if (a.location) sub.appendChild(el('span', '', '📍 ' + a.location));
+  body.appendChild(sub);
+  if (a.note) body.appendChild(el('div', 'note', a.note));
+
+  row.appendChild(chk); row.appendChild(body); card.appendChild(row);
+  return card;
+}
+
+function sectionTitle(text, count) {
+  const h = el('div', 'sec-title');
+  h.appendChild(el('span', '', text + (count ? '　' + count : '')));
+  h.appendChild(el('div', 'line'));
+  return h;
+}
+function emptyBox(emoji, line1, line2) {
+  const b = el('div', 'empty');
+  b.appendChild(el('span', 'em', emoji));
+  b.appendChild(el('p', '', line1));
+  if (line2) b.appendChild(el('p', '', line2));
+  return b;
+}
+
+function renderPanel() {
+  const key = S.sel, d = parseKey(key);
+  $('dayLabel').textContent = (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日 ' + CN_DOW2[isoDow(key) - 1];
+  const rel = relLabel(key);
+  $('dayRel').hidden = !rel;
+  if (rel) $('dayRel').textContent = rel;
+
+  const cs = coursesOn(key), ds = duesOn(key);
+  $('dayCount').textContent = (cs.length ? cs.length + ' 节课' : '') +
+    (cs.length && ds.length ? ' · ' : '') + (ds.length ? ds.length + ' 项 DDL' : '');
+
+  const panel = $('panel');
+  panel.innerHTML = '';
+
+  const renderCourses = () => {
+    panel.appendChild(sectionTitle('课程', cs.length ? cs.length + ' 节' : ''));
+    const list = el('div', 'list');
+    if (cs.length) cs.forEach((o, i) => {
+      const c = courseCard(o); c.style.animationDelay = (i * 35) + 'ms'; list.appendChild(c);
+    });
+    else list.appendChild(emptyBox('☕️', '今日无课，享受自由时间',
+      S.data.courses.length ? null : '还没有导入课程数据'));
+    panel.appendChild(list);
+  };
+  const renderDues = () => {
+    panel.appendChild(sectionTitle('作业 / DDL', ds.length ? ds.length + ' 项' : ''));
+    const list = el('div', 'list');
+    if (ds.length) ds.forEach((a, i) => {
+      const c = dueCard(a); c.style.animationDelay = (i * 35) + 'ms'; list.appendChild(c);
+    });
+    else list.appendChild(emptyBox('🌿', '今日没有截止的作业',
+      S.data.assignments.length ? '保持节奏，稳住' : '还没有导入作业数据'));
+    panel.appendChild(list);
+  };
+
+  if (S.mode === 'course') { renderCourses(); renderDues(); }
+  else { renderDues(); renderCourses(); }
+}
+
+function render() { renderCalendar(); renderPanel(); renderStats(); }
+
+function renderStats() {
+  if (!S.data) return;
+  $('stCourse').textContent = S.data.courses.length;
+  $('stDue').textContent = S.data.assignments.length;
+  $('stLeft').textContent = S.data.assignments.filter((a) => !a.done).length;
+}
+
+async function toggleDone(id) {
+  const a = S.data.assignments.find((x) => x.id === id);
+  if (!a) return;
+  a.done = !a.done;
+  render();
+  try { await persist(); } catch (_) { a.done = !a.done; render(); }
+}
+
+function setMode(mode) {
+  S.mode = mode;
+  $('tabCourse').classList.toggle('on', mode === 'course');
+  $('tabDue').classList.toggle('on', mode === 'due');
+  writePrefs({ ...readPrefs(), mode });
+  render();
+}
+
+/* ------------------------- 锁屏 / 主密码生命周期 ------------------------- */
+let lockMode = 'unlock';   // 'setup' | 'unlock'
+
+function pwScore(p) {
+  let s = 0;
+  if (p.length >= 8) s++;
+  if (p.length >= 12) s++;
+  if (/[a-z]/.test(p) && /[A-Z]/.test(p)) s++;
+  if (/\d/.test(p) && /[^\w\s]/.test(p)) s++;
+  return Math.min(4, s);
+}
+
+function showLock(mode) {
+  lockMode = mode;
+  const setup = mode === 'setup';
+  $('lockTitle').textContent = setup ? '设置主密码' : '解锁课程日历';
+  $('lockDesc').textContent  = setup
+    ? '主密码用于在本机加密你的课程与作业。它不会上传、不会被找回，请务必牢记。'
+    : '数据以 AES-256-GCM 加密保存在本机，输入主密码后仅在内存中解密。';
+  $('lockBtn').textContent = setup ? '创建并进入' : '解锁';
+  $('pw2').hidden = !setup;
+  $('strength').hidden = !setup;
+  $('pw1').autocomplete = setup ? 'new-password' : 'current-password';
+  $('btnForget').hidden = setup;
+  $('lockHint').firstChild.textContent = setup ? '密码至少 8 位，忘记后数据无法恢复。'
+                                               : '主密码不会离开本机，也无法找回。';
+  $('pw1').value = ''; $('pw2').value = '';
+  $('lockErr').textContent = '';
+  $('strength').className = 'strength';
+  $('lock').classList.remove('hide');
+  $('lock').style.display = '';
+  $('app').classList.remove('ready');
+  $('app').setAttribute('aria-hidden', 'true');
+  $('nav').setAttribute('aria-hidden', 'true');
+  closeSheet(true);
+  setTimeout(() => { try { $('pw1').focus(); } catch (_) {} }, 240);
+}
+
+function enterApp() {
+  $('lock').classList.add('hide');
+  setTimeout(() => { if ($('lock').classList.contains('hide')) $('lock').style.display = 'none'; }, 500);
+  $('app').setAttribute('aria-hidden', 'false');
+  $('nav').setAttribute('aria-hidden', 'false');
+  requestAnimationFrame(() => $('app').classList.add('ready'));
+  S.cursor = parseKey(S.sel);
+  $('tabCourse').classList.toggle('on', S.mode === 'course');   // 恢复上次的模式高亮
+  $('tabDue').classList.toggle('on', S.mode === 'due');
+  render();
+}
+
+function lockNow() {
+  S.key = null; S.data = null;
+  $('panel').innerHTML = ''; $('grid').innerHTML = '';
+  showLock('unlock');
+}
+
+function failLock(msg) {
+  $('lockErr').textContent = msg;
+  const card = $('lockCard');
+  card.classList.remove('shake');
+  void card.offsetWidth;
+  card.classList.add('shake');
+  if (navigator.vibrate) { try { navigator.vibrate(60); } catch (_) {} }
+}
+
+async function handleLockSubmit(e) {
+  e.preventDefault();
+  const pw = $('pw1').value;
+  const btn = $('lockBtn');
+  if (!pw) return failLock('请输入主密码');
+
+  btn.disabled = true;
+  btn.textContent = lockMode === 'setup' ? '加密中…' : '校验中…';
+  await new Promise((r) => setTimeout(r, 16));   // 让按钮态先绘制出来
+
+  try {
+    if (lockMode === 'setup') {
+      if (pw.length < 8) throw new Error('主密码至少 8 位');
+      if (pw !== $('pw2').value) throw new Error('两次输入的密码不一致');
+      S.salt = crypto.getRandomValues(new Uint8Array(16));
+      S.iter = KDF_ITER;
+      S.key  = await deriveKey(pw, S.salt, S.iter);
+      S.data = emptyData();
+      await persist();
+      enterApp();
+      toast('已创建加密保险库，去「设置」导入数据吧', 'ok');
+      setTimeout(() => openSheet(), 900);
+    } else {
+      const v = readVault();
+      if (!v) { showLock('setup'); return; }
+      S.salt = b64d(v.salt);
+      S.iter = (v.kdf && v.kdf.iter) || KDF_ITER;
+      const key = await deriveKey(pw, S.salt, S.iter);
+      const data = await aesDecrypt(key, v.iv, v.ct);     // 密码错 → 抛错
+      S.key = key;
+      S.data = { ...emptyData(), ...data };
+      enterApp();
+    }
+  } catch (err) {
+    S.key = null; S.data = null;
+    failLock(err && err.message && lockMode === 'setup' ? err.message : '主密码不正确');
+    $('pw1').select();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = lockMode === 'setup' ? '创建并进入' : '解锁';
+  }
+}
+
+/* ---------------------------- 设置面板控制 ------------------------------ */
+let sheetTimer = 0;
+function openSheet() {
+  if (!S.data) return;
+  clearTimeout(sheetTimer);                       // 取消可能在途的隐藏
+  renderStats();
+  $('scrim').hidden = false; $('sheet').hidden = false;
+  requestAnimationFrame(() => {
+    if ($('sheet').hidden) return;                // 期间已被关闭 → 不要留下脏 class
+    $('scrim').classList.add('on'); $('sheet').classList.add('on');
+  });
+  $('tabSet').classList.add('on');
+}
+function closeSheet(instant) {
+  clearTimeout(sheetTimer);
+  $('scrim').classList.remove('on'); $('sheet').classList.remove('on');
+  $('tabSet').classList.remove('on');
+  const hide = () => { $('scrim').hidden = true; $('sheet').hidden = true; };
+  if (instant) hide(); else sheetTimer = setTimeout(hide, 420);
+}
+
+/* ------------------------------ 导入 / 导出 ----------------------------- */
+function parseJsonLoose(text) {
+  let t = String(text).trim();
+  t = t.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();  // 容忍 AI 输出的代码围栏
+  const i = t.indexOf('{'), j = t.lastIndexOf('}');
+  if (i > 0 || (j > -1 && j < t.length - 1)) t = t.slice(i, j + 1);      // 容忍前后多余文字
+  return JSON.parse(t);
+}
+
+async function doImport(text, mode) {
+  let raw;
+  try { raw = parseJsonLoose(text); }
+  catch (e) { toast('JSON 解析失败：' + e.message, 'err'); return; }
+
+  const { data, errors, warnings } = normalize(raw);
+  if (errors.length) {
+    toast('导入失败（' + errors.length + ' 处错误）：' + errors[0], 'err');
+    console.warn('[import] errors:', errors);
+    return;
+  }
+
+  if (mode === 'merge' && S.data) {
+    const prevDone = new Map(S.data.assignments.map((a) => [a.id, a.done]));
+    const cMap = new Map(S.data.courses.map((c) => [c.id, c]));
+    data.courses.forEach((c) => cMap.set(c.id, c));
+    const aMap = new Map(S.data.assignments.map((a) => [a.id, a]));
+    data.assignments.forEach((a) => {
+      if (prevDone.get(a.id) === true) a.done = true;    // 完成状态永不被导入覆盖
+      aMap.set(a.id, a);
+    });
+    S.data.courses = [...cMap.values()];
+    S.data.assignments = [...aMap.values()];
+    S.data.meta = { ...S.data.meta, ...data.meta };
+  } else {
+    S.data = { ...data, createdAt: S.data ? S.data.createdAt : new Date().toISOString() };
+  }
+
+  try { await persist(); } catch (_) { return; }
+  $('importText').value = '';
+  render();
+  const msg = '已导入 ' + data.courses.length + ' 门课程、' + data.assignments.length + ' 项作业' +
+    (warnings.length ? '（' + warnings.length + ' 条提醒，见控制台）' : '');
+  if (warnings.length) console.warn('[import] warnings:', warnings);
+  toast(msg, 'ok');
+  setTimeout(() => closeSheet(), 700);
+}
+
+function doExport() {
+  if (!S.data) return;
+  const payload = {
+    version: 1, meta: S.data.meta,
+    courses: S.data.courses.map((c) => ({
+      id: c.id, code: c.code, name: c.name, nameZh: c.nameEn ? c.name : undefined,
+      instructor: c.instructor, email: c.email, location: c.location,
+      color: c.color, note: c.note,
+      schedule: c.schedule,
+      sessions: Object.entries(c.sessions).map(([date, s]) => ({ date, ...s }))
+    })),
+    assignments: S.data.assignments.map((a) => ({
+      id: a.id, courseId: a.courseId, course: a.course, title: a.title,
+      due: a.dueKey + 'T' + a.dueTime, type: a.type, weight: a.weight,
+      location: a.location, note: a.note, tentative: a.tentative || undefined, done: a.done
+    })),
+    exportedAt: new Date().toISOString()
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const t = new Date();
+  a.href = url;
+  a.download = 'schedule-backup-' + t.getFullYear() + pad2(t.getMonth() + 1) + pad2(t.getDate()) + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('已导出明文备份，请妥善保管', 'ok');
+}
+
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(okMsg, 'ok');
+  } catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast(okMsg, 'ok'); }
+    catch (e) { toast('复制失败，请手动选择文本', 'err'); }
+    ta.remove();
+  }
+}
+
+async function changePassword() {
+  const oldPw = $('cpOld').value, n1 = $('cpNew').value, n2 = $('cpNew2').value;
+  if (!oldPw || !n1) return toast('请填写完整', 'err');
+  if (n1.length < 8) return toast('新密码至少 8 位', 'err');
+  if (n1 !== n2) return toast('两次输入的新密码不一致', 'err');
+  const v = readVault();
+  if (!v) return toast('本机没有保险库', 'err');
+  try {
+    const k = await deriveKey(oldPw, b64d(v.salt), (v.kdf && v.kdf.iter) || KDF_ITER);
+    await aesDecrypt(k, v.iv, v.ct);                     // 验证旧密码
+  } catch (_) { return toast('当前主密码不正确', 'err'); }
+
+  S.salt = crypto.getRandomValues(new Uint8Array(16));   // 换密码即换盐
+  S.iter = KDF_ITER;
+  S.key  = await deriveKey(n1, S.salt, S.iter);
+  await persist();
+  $('cpOld').value = $('cpNew').value = $('cpNew2').value = '';
+  $('pwForm').hidden = true;
+  toast('主密码已更新，数据已用新密钥重新加密', 'ok');
+}
+
+function wipeAll() {
+  if (!confirm('将永久删除本机的密文数据与主密码，且无法恢复。\n建议先导出备份。\n\n确定继续？')) return;
+  if (!confirm('最后确认：真的要清空本机全部数据吗？')) return;
+  localStorage.removeItem(STORE_KEY);
+  S.key = null; S.data = null;
+  toast('本机数据已清空', 'ok');
+  setTimeout(() => location.reload(), 600);
+}
+
+/* ------------------------------- 事件绑定 ------------------------------- */
+function bind() {
+  $('lockForm').addEventListener('submit', handleLockSubmit);
+  $('pw1').addEventListener('input', (e) => {
+    if (lockMode !== 'setup') return;
+    $('strength').className = 'strength s' + pwScore(e.target.value);
+  });
+  $('btnForget').addEventListener('click', () => {
+    if (!confirm('重置将永久删除本机的加密数据（没有主密码也无法解密它）。\n\n确定重置？')) return;
+    localStorage.removeItem(STORE_KEY);
+    toast('已重置，请重新设置主密码');
+    showLock('setup');
+  });
+
+  $('btnPrev').addEventListener('click', () => { S.cursor.setDate(1); S.cursor.setMonth(S.cursor.getMonth() - 1); renderCalendar(); });
+  $('btnNext').addEventListener('click', () => { S.cursor.setDate(1); S.cursor.setMonth(S.cursor.getMonth() + 1); renderCalendar(); });
+  $('btnToday').addEventListener('click', () => { S.sel = todayKey(); S.cursor = new Date(); render(); });
+
+  $('grid').addEventListener('click', (e) => {
+    const cell = e.target.closest('.cell');
+    if (!cell) return;
+    const key = cell.dataset.key;
+    S.sel = key;
+    const d = parseKey(key);
+    if (d.getMonth() !== S.cursor.getMonth() || d.getFullYear() !== S.cursor.getFullYear()) S.cursor = d;
+    render();
+  });
+
+  $('tabCourse').addEventListener('click', () => { closeSheet(); setMode('course'); });
+  $('tabDue').addEventListener('click', () => { closeSheet(); setMode('due'); });
+  $('tabSet').addEventListener('click', () => {
+    ($('sheet').hidden ? openSheet : closeSheet)();
+  });
+  $('btnCloseSheet').addEventListener('click', () => closeSheet());
+  $('scrim').addEventListener('click', () => closeSheet());
+
+  $('btnMerge').addEventListener('click', () => doImport($('importText').value, 'merge'));
+  $('btnReplace').addEventListener('click', () => {
+    if (S.data && (S.data.courses.length || S.data.assignments.length) &&
+        !confirm('覆盖导入会清空现有的全部课程与作业（含完成状态）。\n\n继续？')) return;
+    doImport($('importText').value, 'replace');
+  });
+  $('btnPickFile').addEventListener('click', () => $('fileInput').click());
+  $('fileInput').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    try {
+      const text = await f.text();
+      $('importText').value = text;
+      toast('已读取 ' + f.name + '，请选择合并或覆盖导入');
+    } catch (_) { toast('文件读取失败', 'err'); }
+    e.target.value = '';
+  });
+
+  $('btnCopyPrompt').addEventListener('click', () =>
+    copyText($('ai-prompt').textContent.trim(), '提取 Prompt 已复制'));
+  $('btnSchema').addEventListener('click', () => {
+    const box = $('schemaBox');
+    if (box.hidden) { box.textContent = $('schema-doc').textContent.trim(); box.hidden = false; }
+    else box.hidden = true;
+  });
+  $('btnExport').addEventListener('click', doExport);
+
+  $('btnChangePw').addEventListener('click', () => { $('pwForm').hidden = !$('pwForm').hidden; });
+  $('cpSubmit').addEventListener('click', changePassword);
+  $('btnLockNow').addEventListener('click', () => { closeSheet(true); lockNow(); });
+  $('btnWipe').addEventListener('click', wipeAll);
+
+  document.addEventListener('keydown', (e) => {
+    if (!S.data) return;
+    if (e.key === 'Escape' && !$('sheet').hidden) return closeSheet();
+    if (e.target.matches('input,textarea')) return;
+    if (e.key === 'ArrowLeft')  { S.sel = fmtKey(addDays(parseKey(S.sel), -1)); S.cursor = parseKey(S.sel); render(); }
+    if (e.key === 'ArrowRight') { S.sel = fmtKey(addDays(parseKey(S.sel), 1));  S.cursor = parseKey(S.sel); render(); }
+    if (e.key === 't' || e.key === 'T') { S.sel = todayKey(); S.cursor = new Date(); render(); }
+  });
+
+  // 后台超时自动上锁（内存态解密的兜底）
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { S.hiddenAt = Date.now(); return; }
+    if (S.key && S.hiddenAt && Date.now() - S.hiddenAt > AUTOLOCK_MS) {
+      lockNow();
+      toast('已自动锁定');
+    }
+    S.hiddenAt = 0;
+  });
+
+  const netTip = () => { $('netLabel').textContent = navigator.onLine ? '在线 · 数据始终只在本机' : '离线可用'; };
+  window.addEventListener('online', netTip);
+  window.addEventListener('offline', netTip);
+  netTip();
+}
+
+/* -------------------------------- 启动 ---------------------------------- */
+function boot() {
+  $('verLabel').textContent = VERSION;
+  $('iterLabel').textContent = '（' + (KDF_ITER / 1000) + 'k 次迭代）';
+  renderDow();
+  bind();
+
+  if (!window.crypto || !crypto.subtle) {
+    $('lockTitle').textContent = '当前环境不受支持';
+    $('lockDesc').textContent = 'Web Crypto 仅在 HTTPS 或 localhost 下可用，请通过 https:// 打开本页面。';
+    $('lockForm').hidden = true; $('lockHint').hidden = true;
+    return;
+  }
+  showLock(readVault() ? 'unlock' : 'setup');
+}
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+else boot();
+
+/* --------------------------- Service Worker ----------------------------- */
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js', { scope: './' }).then((reg) => {
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        if (!sw) return;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+            const t = $('toast');
+            t.textContent = '新版本已就绪，点此刷新';
+            t.className = 'toast on';
+            t.onclick = () => { sw.postMessage('SKIP_WAITING'); location.reload(); };
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => { t.className = 'toast'; t.onclick = null; }, 8000);
+          }
+        });
+      });
+    }).catch(() => {/* 离线缓存不可用不影响主功能 */});
+  });
+}
+
+})();
+</script>
+</body>
+</html>
